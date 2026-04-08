@@ -6,8 +6,31 @@ Created on Wed Apr  8 10:11:21 2026
 """
 
 import math
+import numpy as np
+from dataclasses import dataclass
+from matplotlib import pyplot as plt
 
-
+@dataclass 
+class Request_config:
+    mass_kg:float = 5.0                   # total drone mass
+    speed_kmh:float = 300               # target cruise speed
+    flight_time_min:float = 5.0          # desired flight time
+    
+@dataclass 
+class Drone_config:
+    rho:float = 1.225                     # air density at sea level [kg/m^3]
+    Cd:float = 0.25                       # drag coefficient (optimistic streamlined body)
+    A_front:float = 0.0176                # frontal area [m^2]
+    Cl:float = 0.50     
+@dataclass 
+class Battery_config:
+    eta_total:float = 0.70                # total efficiency (motor + ESC + propulsive)
+    battery_cells:float = 6              # 12S, 14S, etc.
+    cell_nominal_voltage:float = 3.7      # LiPo nominal voltage per cell
+    usable_fraction:float = 0.80          # use only 80% of pack
+    battery_specific_energy:float = 180   # Wh/kg, rough practical estimate
+        
+    
 def drag_force(rho, V, Cd, A_front):
     """
     Drag force:
@@ -108,23 +131,45 @@ def print_results(title, value, unit=""):
 
 
 if __name__ == "__main__":
+    plt.rcParams["font.family"] = "Century Gothic"
+
     # ==========================================================
     # INPUTS — CHANGE THESE FOR YOUR DRONE
     # ==========================================================
-    mass_kg = 5.0                   # total drone mass
-    speed_kmh = 400.0               # target cruise speed
-    flight_time_min = 10.0          # desired flight time
+    Request_config = Request_config(
+                mass_kg = 5.0,                   # total drone mass
+                speed_kmh = 300,               # target cruise speed
+                flight_time_min = 5.0,         # desired flight time
+                    )
+    Drone_config = Drone_config(
+                rho = 1.225,                     # air density at sea level [kg/m^3]
+                Cd = 0.25,                       # drag coefficient (optimistic streamlined body)
+                A_front = 0.024,                # frontal area [m^2]
+                Cl = 0.50
+                    )
+        
+    Battery_config = Battery_config(
+                eta_total = 0.70,                # total efficiency (motor + ESC + propulsive)
+                battery_cells = 6,               # 12S, 14S, etc.
+                cell_nominal_voltage = 3.7,      # LiPo nominal voltage per cell
+                usable_fraction = 0.95,          # use only 80% of pack
+                battery_specific_energy = 180
+                    )
+        
+    mass_kg = Request_config.mass_kg
+    speed_kmh = Request_config.speed_kmh               # target cruise speed
+    flight_time_min = Request_config.flight_time_min        # desired flight time
 
-    rho = 1.225                     # air density at sea level [kg/m^3]
-    Cd = 0.20                       # drag coefficient (optimistic streamlined body)
-    A_front = 0.010                 # frontal area [m^2]
-    Cl = 0.50                       # lift coefficient if using wing
+    rho = Drone_config.rho                    # air density at sea level [kg/m^3]
+    Cd = Drone_config.Cd                       # drag coefficient (optimistic streamlined body)
+    A_front = Drone_config.A_front                # frontal area [m^2]
+    Cl = Drone_config.Cl                       # lift coefficient if using wing
 
-    eta_total = 0.70                # total efficiency (motor + ESC + propulsive)
-    battery_cells = 12              # 12S, 14S, etc.
-    cell_nominal_voltage = 3.7      # LiPo nominal voltage per cell
-    usable_fraction = 0.80          # use only 80% of pack
-    battery_specific_energy = 180   # Wh/kg, rough practical estimate
+    eta_total = Battery_config.eta_total                # total efficiency (motor + ESC + propulsive)
+    battery_cells = Battery_config.battery_cells             # 12S, 14S, etc.
+    cell_nominal_voltage = Battery_config.cell_nominal_voltage      # LiPo nominal voltage per cell
+    usable_fraction =Battery_config.usable_fraction         # use only 80% of pack
+    battery_specific_energy = Battery_config.battery_specific_energy   # Wh/kg, rough practical estimate
 
     # ==========================================================
     # DERIVED VALUES
@@ -175,7 +220,10 @@ if __name__ == "__main__":
 
     print("\n---- AERODYNAMICS ----")
     print_results("Weight", weight, "N")
-    print_results("Drag force", D, "N")
+    print_results("Drag force (min forward thrust)", D, "N")
+    print_results("Take off thrust", weight*1.5, "N")
+
+    
     print_results("Mechanical cruise power", P_mech, "W")
     print_results("Electrical cruise power", P_elec, "W")
     print_results("Required wing area", S_required, "m^2")
@@ -192,3 +240,40 @@ if __name__ == "__main__":
     print("* Cruise-only sizing is optimistic.")
     print("* Real design must also include takeoff, climb, transition, peak current, and reserve.")
     print("* For a VTOL/pusher concept, actual required battery may be significantly larger.")
+    
+    #===========================================
+    #battery weight vs speed
+    speed = np.linspace(200, 600, 20)
+    weight_all = []
+    for i, v in enumerate (speed):
+        V = kmh_to_ms(v)
+        weight = mass_kg * 9.81
+
+        D = drag_force(rho, V, Cd, A_front)
+        P_mech = mechanical_power_from_drag(D, V)
+        P_elec = electrical_power_required(P_mech, eta_total)
+        E_wh = battery_energy_wh(P_elec, flight_time_min)
+        battery_mass = battery_mass_from_energy(E_wh, battery_specific_energy, usable_fraction)
+        weight_all.append(battery_mass)
+
+    fig, ax = plt.subplots (1 ,2)
+    ax = ax.ravel()
+    ax[0].plot(speed, weight_all, '-o')
+    ax[0].grid("both")
+    ax[0].set_xlabel("Speed (Km/h)")
+    ax[0].set_ylabel("battery weight (Kg)")
+    
+    front_area = np.linspace(0.008, 0.022, 20)
+    
+    D_all = []
+    for i,v in enumerate(front_area):
+        D = drag_force(rho, V, Cd, v)
+        D_all.append(D)
+        
+    ax[1].plot(front_area, D_all, '-o')
+    ax[1].grid("both")
+    ax[1].set_xlabel("Front area m2")
+    ax[1].set_ylabel("Requiered thrust @cruise speed (N)")
+        
+    
+    
